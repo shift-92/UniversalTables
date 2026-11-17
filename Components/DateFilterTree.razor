@@ -1,0 +1,74 @@
+@namespace UniversalTables.Components
+@using UniversalTables.Query
+@inject TableOptions Options
+<input class="ut-input" placeholder="Поиск даты" @bind="_search" @bind:event="oninput" />
+<div class="ut-buttons"><button @onclick="Clear">Снять выбор</button></div>
+<div class="ut-date-tree">
+    @if(Nullable)
+    {
+        <label><input type="checkbox" @bind="IncludeEmpty" @bind:after="NotifyChangedAsync" /> (пусто)</label>
+    }
+    @foreach(var year in Years)
+    {
+        var period = new CalendarPeriod(new(year,1,1),new(year,12,31));
+        <details @key="year" open="@(!string.IsNullOrWhiteSpace(_search))">
+            <summary>@Check(period, year.ToString())</summary>
+            @foreach(var month in Months(year))
+            {
+                var monthPeriod = new CalendarPeriod(new(year,month,1),new(year,month,DateTime.DaysInMonth(year,month)));
+                <details @key="month" open="@(!string.IsNullOrWhiteSpace(_search))">
+                    <summary>@Check(monthPeriod, Options.EffectiveCulture.DateTimeFormat.GetMonthName(month))</summary>
+                    @foreach(var day in Days(year,month))
+                    {
+                        @Check(new(day,day),Options.Format(day))
+                    }
+                </details>
+            }
+        </details>
+    }
+</div>
+@code {
+    [Parameter] public IReadOnlyList<DateOnly> Dates {get;set;} = [];
+    [Parameter] public bool Nullable {get;set;}
+    [Parameter] public IReadOnlyList<CalendarPeriod> Initial {get;set;} = [];
+    [Parameter] public bool InitialEmpty {get;set;}
+    [Parameter] public EventCallback Changed {get;set;}
+    public List<CalendarPeriod> Periods {get;} = [];
+    public bool IncludeEmpty {get;set;}
+    private string _search = "";
+    protected override void OnInitialized() { Periods.AddRange(Initial); IncludeEmpty=InitialEmpty; }
+    private IEnumerable<DateOnly> VisibleDates => Dates.Concat(Initial.SelectMany(p=>new[] { p.Start,p.End })).Distinct()
+        .Where(d=>Options.EffectiveCulture.CompareInfo.IndexOf(Options.Format(d),_search,CompareOptions.IgnoreCase)>=0
+            || Options.EffectiveCulture.CompareInfo.IndexOf(d.ToString("MMMM",Options.EffectiveCulture),_search,CompareOptions.IgnoreCase)>=0);
+    private IEnumerable<int> Years => VisibleDates.Select(d=>d.Year).Distinct().Order();
+    private IEnumerable<int> Months(int year) => VisibleDates.Where(d=>d.Year==year).Select(d=>d.Month).Distinct().Order();
+    private IEnumerable<DateOnly> Days(int year,int month) => VisibleDates.Where(d=>d.Year==year && d.Month==month).Order();
+    private bool Full(CalendarPeriod p) => Periods.Any(x=>x.Start<=p.Start && x.End>=p.End);
+    private bool Partial(CalendarPeriod p) => !Full(p) && Periods.Any(x=>x.Start<=p.End && x.End>=p.Start);
+    private RenderFragment Check(CalendarPeriod period,string text) => @<label class="ut-date-node">
+        <input type="checkbox" checked="@Full(period)" data-indeterminate="@(Partial(period) ? "true" : "false")"
+               aria-checked="@(Partial(period) ? "mixed" : Full(period) ? "true" : "false")"
+               @onchange="e=>Toggle(period,e.Value is true)" /> @text
+    </label>;
+    private Task NotifyChangedAsync()=>Changed.InvokeAsync();
+    private async Task Clear() { Periods.Clear(); IncludeEmpty=false; await NotifyChangedAsync(); }
+    private async Task Toggle(CalendarPeriod period,bool on)
+    {
+        var remaining = new List<CalendarPeriod>();
+        foreach(var old in Periods)
+        {
+            if(old.End<period.Start || old.Start>period.End) { remaining.Add(old); continue; }
+            if(old.Start<period.Start) remaining.Add(new(old.Start,period.Start.AddDays(-1)));
+            if(old.End>period.End) remaining.Add(new(period.End.AddDays(1),old.End));
+        }
+        if(on) remaining.Add(period);
+        Periods.Clear();
+        foreach(var item in remaining.OrderBy(p=>p.Start))
+        {
+            if(Periods.Count>0 && item.Start.DayNumber<=Periods[^1].End.DayNumber+1)
+                Periods[^1]=new(Periods[^1].Start,item.End>Periods[^1].End ? item.End : Periods[^1].End);
+            else Periods.Add(item);
+        }
+        await NotifyChangedAsync();
+    }
+}

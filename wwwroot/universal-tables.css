@@ -1,0 +1,92 @@
+.ut{position:relative;display:flex;flex-direction:column;min-height:120px;overflow:hidden;background:var(--mud-palette-surface,#303038);color:var(--mud-palette-text-primary,#eee);font-size:13px;border:1px solid #80808050;border-radius:4px}
+.ut button,.ut-filter button,.ut-editor button{font:inherit;color:inherit;cursor:pointer}
+.ut button:disabled,.ut-filter button:disabled,.ut-editor button:disabled{opacity:.5;cursor:default}
+.ut-toolbar{display:flex;gap:8px;min-height:30px;padding:3px 6px;border-bottom:1px solid #80808040}
+.ut-toolbar button{background:transparent;border:1px solid #80808050;border-radius:3px}
+.ut-viewport{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+.ut-content{min-width:100%}
+.ut-header{position:sticky;top:0;z-index:4}
+.ut-header-titles,.ut-header-filters,.ut-row{display:flex;width:100%}
+.ut-header-titles{height:30px;background:#078dbb;color:white}
+.ut-heading{position:relative;flex-shrink:0;box-sizing:border-box;border-right:1px solid #ffffff35}
+.ut-heading>button{display:flex;align-items:center;gap:4px;width:100%;height:30px;border:0;padding:0 8px;background:transparent;text-align:left;font-weight:600}
+.ut-heading>button>span{flex:1;min-width:0;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
+.ut-resize{position:absolute;right:0;top:0;width:6px;height:30px;cursor:col-resize;touch-action:none}
+.ut-resize:hover{background:#ffffff60}
+.ut-header-filters{height:19px;background:#42464d}
+.ut-header-filters>div{flex-shrink:0;box-sizing:border-box;border-right:1px solid #ffffff30;border-bottom:1px solid #078dbb}
+.ut-header-filters button{display:block;height:19px;width:100%;text-align:left;border:0;background:transparent;color:#ddd;padding:0 4px}
+.ut-header-filters button.active{color:#54d4ff;font-weight:bold}
+.ut-row{height:30px;min-height:30px;max-height:30px;box-sizing:border-box}
+.ut-cell{display:flex;align-items:center;flex-shrink:0;box-sizing:border-box;height:30px;overflow:hidden;padding:0 7px;border-right:1px solid #80808040;border-bottom:1px solid #80808030;white-space:nowrap}
+.ut-ellipsis{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ut-tooltip .ut-tooltip-description{white-space:pre-wrap;overflow-wrap:anywhere}
+.ut-reference-option{padding:6px;cursor:pointer}
+.ut-reference-option:hover,.ut-reference-option[aria-selected="true"]{background:#80808040}
+.ut-cell.ut-collection-link{cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.ut-row:hover{background:#80808015}
+.ut-cell.changed{background:#e9b94920;box-shadow:inset 2px 0 #e9b949}
+.ut-row.deleted{color:#ed8585;text-decoration:line-through;background:#d32f2f15}
+.ut-row.added{color:#63cf98;background:#35b87820;box-shadow:inset 3px 0 #35b878}
+.ut-row.added>.ut-cell.changed,.ut-row.deleted>.ut-cell.changed{background:transparent;box-shadow:none}
+.ut-empty{padding:20px}
+.ut-footer{display:flex;align-items:center;gap:12px;height:30px;flex-shrink:0;padding:0 5px;background:#078dbb;color:white}
+.ut-footer>span{flex-shrink:0;padding:2px 8px;border-radius:12px;background:#ffffff20}
+.ut-footer>button{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;border-radius:12px;background:#ffffff18}
+.ut-log,.ut-tooltip,.ut-column-settings{position:absolute;z-index:5;background:var(--mud-palette-surface,#303038);border:1px solid #80808080;border-radius:4px;padding:10px;box-shadow:0 5px 20px #0006;overflow:auto}
+.ut-log{bottom:34px;right:5px;width:min(600px,calc(100% - 10px));max-height:250px}
+.ut-log>div{padding:5px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.ut-tooltip{position:fixed;inset:auto;margin:0;z-index:1400;box-sizing:border-box;width:max-content;max-width:min(400px,calc(100vw - 16px));max-height:min(240px,calc(100dvh - 16px));overflow:hidden;pointer-events:none;color:var(--mud-palette-text-primary,#eee);font-size:13px}
+.ut-tooltip-text{overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:100%}
+.ut-tooltip-text *{max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ut-column-settings{top:32px;left:4px;max-height:300px;display:flex;flex-direction:column;gap:5px}
+.ut-editor-overlay{position:fixed;inset:0;z-index:1350;background:transparent}
+.ut-editor{position:fixed;z-index:1351;box-sizing:border-box;background:var(--mud-palette-surface,#303038);color:var(--mud-palette-text-primary,#eee);outline:2px solid #078dbb;box-shadow:0 5px 16px #0006}
+.ut-reference-options{z-index:1352!important}
+.ut-editor-title{padding:10px 12px;border-bottom:1px solid var(--mud-palette-divider,#80808040);overflow-wrap:anywhere}
+.ut-input{width:100%;height:30px;box-sizing:border-box;padding:3px 6px;border:1px solid #80808060;background:var(--mud-palette-surface,#303038);color:var(--mud-palette-text-primary,#eee);font:inherit}
+.ut-editor .mud-input-control{margin-top:0}.ut-editor .mud-input-slot{padding-top:3px!important;padding-bottom:3px!important}
+.ut-error{color:var(--mud-palette-error,#ef6464);padding:5px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.ut-status{padding:5px;font-size:12px}
+.ut-buttons{display:flex;gap:6px;padding:4px;flex-wrap:wrap}
+.ut-buttons button{border:1px solid #80808060;background:transparent;border-radius:3px;padding:3px 6px}
+.ut-filter-overlay{position:fixed;inset:0;z-index:1340;background:transparent}
+.ut-filter{position:fixed;z-index:1341;inset:auto;margin:0;box-sizing:border-box;flex-direction:column;gap:10px;width:min(340px,calc(100vw - 16px));overflow:auto;padding:12px;border:1px solid #80808080;border-radius:5px;background:var(--mud-palette-surface,#303038);color:var(--mud-palette-text-primary,#eee);box-shadow:0 8px 25px #0006}
+.ut-filter:popover-open{display:flex}
+.ut-inline-filter{display:flex;flex-direction:column;gap:10px;margin-top:10px;padding:12px;border:1px solid #80808080;border-radius:4px;min-width:0;background:var(--mud-palette-surface,#303038)}
+.ut-inline-filter header,.ut-inline-filter footer{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ut-complex-backdrop{position:fixed;inset:0;z-index:1330;background:#0006}
+.ut-complex-filter{position:fixed;z-index:1331;top:5vh;left:50%;transform:translateX(-50%);width:min(900px,calc(100vw - 24px));max-height:90dvh;overflow:auto;box-sizing:border-box;padding:16px;border:1px solid #80808080;border-radius:6px;background:var(--mud-palette-surface,#303038);color:var(--mud-palette-text-primary,#eee);box-shadow:0 8px 25px #0006}
+.ut-complex-filter header{display:flex;justify-content:space-between;align-items:center}
+.ut-complex-dialog-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.ut-complex-filter.ut-complex-filter-maximized{inset:0;transform:none;width:100%;height:100dvh;max-height:100dvh;border-radius:0}
+.ut-complex-filter button,.ut-complex-filter select{font:inherit;color:inherit;background:var(--mud-palette-surface,#303038);border:1px solid #80808080;border-radius:3px;padding:4px 8px}
+.ut-filter-group{min-width:0;margin:8px 0;padding:10px;border:1px solid #80808080;border-radius:4px}
+.ut-complex-rule{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}
+.ut-complex-rule>span{flex:1;min-width:120px;overflow-wrap:anywhere}
+.ut-row-controls button.ut-filter-active{background:#078dbb;color:white}
+.ut-heading-label{display:block;padding:0 8px;line-height:30px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:600}
+.ut-header-filters .ut-heading-actions{display:flex}
+.ut-header-filters .ut-heading-actions button{width:50%;min-width:0;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ut-heading-actions button+button{border-left:1px solid #ffffff30}
+.ut-heading.ut-drop-before::after,.ut-heading.ut-drop-after::after{content:"";position:absolute;inset:2px;border:2px dashed white;pointer-events:none;background:#ffffff20}
+.ut-heading.ut-drop-before::after{border-left:5px solid #ffe082}
+.ut-heading.ut-drop-after::after{border-right:5px solid #ffe082}
+.ut-filter header,.ut-filter footer{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ut-filter button{border:1px solid #80808060;background:transparent;border-radius:3px;padding:4px 8px}
+.ut-choices{height:240px;overflow:auto;border:1px solid #80808040}
+.ut-choice{display:flex;align-items:center;gap:8px;height:30px;box-sizing:border-box;padding:0 5px}
+.ut-choice span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ut-row-controls{position:sticky;left:0;z-index:3;flex:0 0 64px;width:64px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:2px;background:var(--mud-palette-surface,#303038);border-right:1px solid #80808060;color:var(--mud-palette-text-primary,#eee)}
+.ut-row-controls button{width:27px;height:24px;padding:0;border:0;border-radius:3px;background:transparent;color:inherit}
+.ut-header-filters .ut-row-controls button{box-sizing:border-box;width:100%;height:100%;min-width:0;border-radius:0;text-align:center}
+.ut-row.selected{outline:1px solid #078dbb;outline-offset:-1px}
+.ut-row.selected>.ut-row-controls{background:#078dbb;color:white}
+.ut-header .ut-row-controls{z-index:4}
+.ut-row-menu{position:fixed;inset:auto;margin:0;padding:5px;min-width:150px;max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px);overflow:auto;border:1px solid #80808080;border-radius:4px;background:var(--mud-palette-surface,#303038);color:var(--mud-palette-text-primary,#eee);box-shadow:0 5px 20px #0006}
+.ut-row-menu:popover-open{display:flex;flex-direction:column}
+.ut-menu-separator{flex-shrink:0;border-top:1px solid var(--mud-palette-divider,#80808040);margin:4px 0}
+.ut-row-menu button{font:inherit;text-align:left;padding:7px 12px;border:0;background:transparent;color:inherit;cursor:pointer}
+.ut-row-menu button:hover{background:#80808030}.ut-row-menu button:disabled{opacity:.5;cursor:default}
+.ut-menu-branch>button{display:flex;justify-content:space-between;align-items:center;gap:20px;width:100%}.ut-row-menu button:focus-visible{outline:2px solid var(--mud-palette-primary,#078dbb);outline-offset:-2px}.ut-group{align-items:center;gap:8px;background:#078dbb20;white-space:nowrap;overflow:hidden}.ut-group button{background:transparent;border:0}.ut-long-text{height:240px;resize:vertical;white-space:pre-wrap}
+.ut-date-tree{max-height:280px;overflow:auto}.ut-date-tree details details{margin-left:16px}.ut-date-node{display:inline-flex;align-items:center;gap:5px;min-height:26px}.ut-date-tree details>label{display:flex;margin-left:32px}

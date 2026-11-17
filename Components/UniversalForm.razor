@@ -1,0 +1,110 @@
+@namespace UniversalTables.Components
+@implements IDisposable
+@using UniversalTables.Drafts
+@inject CommandDispatcher Dispatcher
+@inject DraftFactory Factory
+@inject ModelRegistry Registry
+@inject IServiceProvider Services
+@inject ISnackbar Snackbar
+<BlockingOperation Busy="_busy">
+<section class="ut4-form" @onkeydown="KeyDown">
+    <header><h3>@Title</h3></header>
+    <div class="ut4-fields">
+        @foreach(var field in Session.Draft.Fields)
+        {
+            <div class="ut4-field" @key="field.Column.Id">
+                <label>@field.Column.Title @if(field.Column.Required) { <span>*</span> }</label>
+                <TableFieldInput Field="field" Data="Data" />
+            </div>
+        }
+    </div>
+    @foreach(var collection in Session.Draft.Collections)
+    {
+        <CollectionFormEditor @key="collection" Draft="collection" Data="Data"
+            Columns="ChildColumns(collection)" Disabled="@(_busy || _uncertain)" />
+    }
+    @if(_error is not null) { <div class="ut4-error" role="alert">@_error</div> }
+    @if(_uncertain) { <p>Результат операции неизвестен. Повторная отправка заблокирована. Требуется сверка с сервером.</p> }
+    <footer>
+        @if(_busy) { <span>Ожидание подтверждения…</span> }
+        <button type="button" disabled="@_busy" @onclick="CancelAsync">Отмена</button>
+        <button type="button" disabled="@(_busy || _uncertain)" @onclick="SaveAsync">Сохранить</button>
+    </footer>
+</section>
+</BlockingOperation>
+@code {
+    [Parameter,EditorRequired] public FormSession Session {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter] public string Title {get;set;}="Редактирование";
+    [Parameter] public TimeSpan Timeout {get;set;}=TimeSpan.FromSeconds(30);
+    [Parameter] public EventCallback<DispatchResult> Saved {get;set;}
+    [Parameter] public EventCallback Cancelled {get;set;}
+    [Parameter] public EventCallback<bool> BusyChanged {get;set;}
+    [Parameter] public EventCallback<TableNotice> Notice {get;set;}
+    private readonly CancellationTokenSource _lifetime=new();
+    private readonly Dictionary<CollectionDraft,IReadOnlyList<TableColumn>> _childColumns=[];
+    private bool _busy,_uncertain,_disposed;
+    private string? _error;
+    private FormSession? _initialized;
+    protected override void OnParametersSet()
+    {
+        if(ReferenceEquals(_initialized,Session)) return;
+        if(_busy) throw new InvalidOperationException("Cannot replace an active form session.");
+        _initialized=Session; _error=null; _uncertain=false; _childColumns.Clear();
+        foreach(var collection in Session.Draft.Collections)
+        {
+            var columns=Registry.Get(collection.Column.Collection!.ElementType).CreateColumns(Services)
+                .Where(c=>c.FormVisible && c.Collection is null && c.PropertyPath!=nameof(IWebModel.Id)
+                    && (c.Reference?.ForeignKeyPath ?? c.PropertyPath)!=collection.Column.Collection.ForeignKey).ToArray();
+            _childColumns.Add(collection,columns);
+        }
+    }
+    private IReadOnlyList<TableColumn> ChildColumns(CollectionDraft draft)=>_childColumns[draft];
+    private void Lock(bool value)
+    {
+        foreach(var field in Session.Draft.Fields) field.Busy=value;
+        foreach(var collection in Session.Draft.Collections)
+            foreach(var row in collection.Rows)
+                foreach(var field in row.Form.Fields) field.Busy=value;
+    }
+    private async Task SaveAsync()
+    {
+        if(_busy || _uncertain) return;
+        CommandEnvelope command;
+        try
+        {
+            Factory.ValidateSubmission(Session.Draft,Data);
+            var request=Session.Draft.Build();
+            command=CommandEnvelope.Create(Data.Context,request);
+            if(Dispatcher.IsBlocked(command.Scope)) throw new InvalidOperationException("Есть неподтверждённая операция. Выполните сверку с сервером.");
+        }
+        catch(Exception ex) { await Error(ex.Message); return; }
+        _error=null; _busy=true; Lock(true);
+        DispatchResult? result=null;
+        try
+        {
+            await BusyChanged.InvokeAsync(true);
+            result=await Dispatcher.SendAsync(command,Timeout,_lifetime.Token);
+            _uncertain=result.Status==DispatchStatus.Unknown;
+            if(result.Status is DispatchStatus.Unknown or DispatchStatus.Rejected) await Error(result.Message ?? "Сохранение не подтверждено.");
+        }
+        catch(OperationCanceledException) when(_disposed) { }
+        catch(Exception ex) { if(!_disposed) await Error(ex.Message); }
+        finally
+        {
+            _busy=false; Lock(_uncertain);
+            if(!_disposed) await BusyChanged.InvokeAsync(false);
+        }
+        if(!_disposed && result?.Status is DispatchStatus.Confirmed or DispatchStatus.NotChanged)
+            await Saved.InvokeAsync(result);
+    }
+    private Task KeyDown(KeyboardEventArgs e)=>e.Key=="Escape" && !_busy ? CancelAsync() : Task.CompletedTask;
+    private Task CancelAsync()=>_busy ? Task.CompletedTask : Cancelled.InvokeAsync();
+    private async Task Error(string message)
+    {
+        if(_disposed) return;
+        _error=message; Snackbar.Add(message,Severity.Error);
+        await Notice.InvokeAsync(new(DateTimeOffset.UtcNow,message,true));
+    }
+    public void Dispose() { _disposed=true; _lifetime.Cancel(); _lifetime.Dispose(); }
+}

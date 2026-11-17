@@ -1,0 +1,85 @@
+@namespace UniversalTables.Components
+@implements IDisposable
+@inject IDeletionService Deletions
+@inject CommandDispatcher Dispatcher
+@inject ISnackbar Snackbar
+<BlockingOperation Busy="@(_busy || _loading)">
+<section class="ut4-delete">
+    <header><h3>@(Restore ? "Восстановление" : "Удаление")</h3></header>
+    @if(_loading) { <p>Проверяем зависимости…</p> }
+    else if(_preview is not null)
+    {
+        @if(!_preview.Allowed) { <div class="ut4-error">@(_preview.Reason ?? "Операция запрещена.")</div> }
+        @foreach(var group in _preview.Dependencies)
+        {
+            <button type="button" class="ut4-dependency" disabled="@_busy" @onclick="()=>DependencyRequested.InvokeAsync(group)">
+                <span>@group.Title</span><strong>@group.Count</strong>
+            </button>
+        }
+        <p>Объектов в плане: @_preview.Affected.Count</p>
+        @if(Restore) { <p>Восстановление выполняется по актуальной группе удаления, без автоматической отмены чужих изменений FK.</p> }
+        else if(Data.Context.Mode==TableMode.Ticket) { <p>Политики Cascade, Restrict и SetNull определяются движком истории.</p> }
+    }
+    @if(_error is not null) { <div class="ut4-error" role="alert">@_error</div> }
+    <footer>
+        @if(_busy) { <span>Ожидание подтверждения…</span> }
+        <button type="button" disabled="@_busy" @onclick="()=>Cancelled.InvokeAsync()">Отмена</button>
+        <button type="button" disabled="@(_loading || _busy || _uncertain || _preview?.Allowed!=true)" @onclick="ConfirmAsync">Подтвердить</button>
+    </footer>
+</section>
+</BlockingOperation>
+@code {
+    [Parameter,EditorRequired] public EntityKey Root {get;set;}
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter] public bool Restore {get;set;}
+    [Parameter] public EventCallback<DependencyGroup> DependencyRequested {get;set;}
+    [Parameter] public EventCallback<DispatchResult> Completed {get;set;}
+    [Parameter] public EventCallback Cancelled {get;set;}
+    [Parameter] public EventCallback<bool> BusyChanged {get;set;}
+    private readonly CancellationTokenSource _lifetime=new();
+    private DeletePreview? _preview;
+    private bool _loading=true,_busy,_uncertain,_disposed;
+    private string? _error;
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            if(Restore && Data.Context.Mode!=TableMode.Ticket) throw new InvalidOperationException("Восстановление доступно только в заявке.");
+            _preview=await Preview();
+        }
+        catch(Exception ex) when(!_disposed) { _error=ex.Message; }
+        finally { _loading=false; }
+    }
+    private Task<DeletePreview> Preview()=>Restore
+        ? Deletions.PreviewRestoreAsync(Root,_lifetime.Token) : Deletions.PreviewDeleteAsync(Root,_lifetime.Token);
+    private async Task ConfirmAsync()
+    {
+        if(_busy || _uncertain || _preview?.Allowed!=true) return;
+        _busy=true; _error=null;
+        DispatchResult? result=null;
+        try
+        {
+            await BusyChanged.InvokeAsync(true);
+            // Preview refresh is not the authority: transport/server must replan atomically at submission.
+            _preview=await Preview();
+            if(!_preview.Allowed) return;
+            var request=new EditRequest(Restore ? ChangeKind.Restore : ChangeKind.Delete,Root,null,[],[],new Dictionary<string,System.Text.Json.JsonElement>());
+            var command=CommandEnvelope.Create(Data.Context,request);
+            if(Dispatcher.IsBlocked(command.Scope)) throw new InvalidOperationException("Есть неподтверждённая операция.");
+            result=await Dispatcher.SendAsync(command,TimeSpan.FromSeconds(30),_lifetime.Token);
+            _uncertain=result.Status==DispatchStatus.Unknown;
+            if(result.Status is DispatchStatus.Unknown or DispatchStatus.Rejected) _error=result.Message ?? "Операция не подтверждена.";
+        }
+        catch(OperationCanceledException) when(_disposed) { }
+        catch(Exception ex) { if(!_disposed) _error=ex.Message; }
+        finally
+        {
+            _busy=false;
+            if(!_disposed) await BusyChanged.InvokeAsync(false);
+        }
+        if(_disposed) return;
+        if(_error is not null) Snackbar.Add(_error,Severity.Error);
+        if(result?.Status is DispatchStatus.Confirmed or DispatchStatus.NotChanged) await Completed.InvokeAsync(result);
+    }
+    public void Dispose() { _disposed=true; _lifetime.Cancel(); _lifetime.Dispose(); }
+}

@@ -1,0 +1,512 @@
+@namespace UniversalTables.Components
+@implements IAsyncDisposable
+@using UniversalTables.Query
+@using UniversalTables.Drafts
+@inject ModelRegistry Registry
+@inject TableOptions Options
+@inject IServiceProvider Services
+@inject IJSRuntime JS
+@inject CommandDispatcher Dispatcher
+@inject ISnackbar Snackbar
+<div class="ut" @ref="_root" tabindex="0" @onkeydown="TableKeyAsync" @onkeydown:stopPropagation="true" style="@($"height:{Height}")">
+    @if(_engine is null) { <div class="ut-empty">Загрузка…</div> }
+    else
+    {
+        <div class="ut-toolbar">
+            <button type="button" disabled="@(_field is not null)" @onclick="()=>_showColumns=!_showColumns">Столбцы</button>
+            @Toolbar
+        </div>
+        @if(_showColumns)
+        {
+            <div class="ut-column-settings">
+                @foreach(var column in _columns.OrderBy(c=>c.Order))
+                {
+                    <label><input type="checkbox" checked="@column.Visible" @onchange="e=>VisibilityAsync(column,e.Value is true)" />@column.Title</label>
+                }
+            </div>
+        }
+        <div class="ut-viewport" @ref="_viewport">
+            <div class="ut-content" style="@($"width:{N(Visible.Sum(c=>c.Width)+64)}px")">
+                <div class="ut-header">
+                    <div class="ut-header-titles">
+                        <div class="ut-row-controls" title="Выделение и операции">@_selection.Count</div>
+                        @foreach(var column in Visible)
+                        {
+                            <div class="ut-heading" data-column="@column.Id" data-min="@N(column.MinWidth)" draggable="true" style="@Width(column)">
+                                <span class="ut-heading-label" @onmouseenter="()=>{_hover=null;_hoverHeading=column.Title;}" @onmouseleave="()=>_hoverHeading=null">@column.Title</span>
+                                <span class="ut-resize" data-resize="@column.Id"></span>
+                            </div>
+                        }
+                    </div>
+                    <div class="ut-header-filters">
+                        <div class="ut-row-controls"><button type="button" aria-label="Фильтры (AND / OR)" @onmouseenter='()=>{_hover=null;_hoverHeading="Фильтры (AND / OR)";}' @onmouseleave="()=>_hoverHeading=null" class="@(_query.AdvancedFilter is not null ? "ut-filter-active" : "")" disabled="@(_field is not null)" @onclick="OpenAdvancedFilters">▽</button></div>
+                        @foreach(var column in Visible)
+                        {
+                            var sort=_query.Sorts.FindIndex(s=>s.ColumnId==column.Id);
+                            <div class="ut-heading-actions" data-width="@column.Id" style="@Width(column)">
+                                <button data-filter-anchor="@column.Id" aria-label="Фильтр" @onmouseenter='()=>{_hover=null;_hoverHeading="Фильтр";}' @onmouseleave="()=>_hoverHeading=null" class="@(_query.Filters.Any(f=>f.ColumnId==column.Id) ? "active" : "")" disabled="@(_field is not null)" @onclick="()=>OpenFilter(column)">▽</button>
+                                <button aria-label="Сортировка (Ctrl — несколько столбцов)" @onmouseenter='()=>{_hover=null;_hoverHeading="Сортировка (Ctrl — несколько столбцов)";}' @onmouseleave="()=>_hoverHeading=null" disabled="@(_field is not null)" @onclick="e=>SortAsync(column,e.CtrlKey)">@(sort>=0 ? $"{(_query.Sorts[sort].Descending ? "▼" : "▲")}{sort+1}" : "↕")</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+                @if(_rows.Count==0) { <div class="ut-empty">Нет записей</div> }
+                else
+                {
+                    <Virtualize Items="@_flatRows" Context="entry" ItemSize="30" OverscanCount="6">
+                        <ItemContent>
+                            @if(entry.Row is not { } row)
+                            {
+                                <div @key="entry.Path" class="ut-row ut-group" data-group="@_groups[entry.Depth]" style="@($"padding-left:{entry.Depth*20+64}px")">
+                                    <button disabled="@(_field is not null)" @onclick="()=>ToggleGroup(entry.Path)">@(_collapsed.Contains(entry.Path) ? "▶" : "▼")</button>
+                                    <span>@entry.Label (@entry.Count)</span>
+                                </div>
+                            }
+                            else
+                            {
+                            var key=Key(row); var rowState=Data.GetRowState(key);
+                            <div @key="key" class="@($"ut-row {(rowState.IsDeleted ? "deleted" : rowState.IsAdded ? "added" : "")} {(_selection.Contains(key) ? "selected" : "")}")" data-row="@key.Id">
+                                <div class="ut-row-controls">
+                                    <button type="button" aria-label="Выделить строку" aria-pressed="@_selection.Contains(key)" disabled="@(_field is not null)" @onclick="e=>SelectRowAsync(key,e)">→</button>
+                                    <button type="button" aria-label="Операции над строкой" disabled="@(_field is not null || _bulkBusy || (!RowOperationRequested.HasDelegate && !RestoreRequested.HasDelegate))" @onclick="e=>OpenRowMenu(key,e)">⋯</button>
+                                </div>
+                                @foreach(var column in Visible)
+                                {
+                                    var diff=Data.GetDifference(new(key,column.Id));
+                                    var context=new CellContext(row,key,column,column.Read(row),diff);
+                                    <div @key="column.Id" class="@($"ut-cell {(diff.Changed ? "changed" : "")} {(column.Collection is not null && CollectionRequested.HasDelegate && _field is null && !_bulkBusy ? "ut-collection-link" : "")}")" data-width="@column.Id" data-cell="@column.Id" style="@Width(column)"
+                                        @onclick="()=>ActivateAsync(context)" @onmouseenter="()=>{_hoverHeading=null;_hover=context;}" @onmouseleave="()=>_hover=null">
+                                        @if(column.CellTemplate is not null) { @column.CellTemplate(context) }
+                                        else { <span class="ut-ellipsis">@Display(row,column)</span> }
+                                    </div>
+                                }
+                            </div>
+                            }
+                        </ItemContent>
+                        <Placeholder><div class="ut-row"></div></Placeholder>
+                    </Virtualize>
+                }
+            </div>
+        </div>
+        <footer class="ut-footer"><span>@(_rows.Count==_total ? _total.ToString() : $"{_rows.Count} / {_total}")</span>
+            <button title="@(_logs.LastOrDefault()?.Message)" @onclick="()=>_showLog=!_showLog">@(_logs.LastOrDefault()?.Message ?? "Нет событий")</button>
+        </footer>
+        @if(_showLog)
+        {
+            <div class="ut-log">@foreach(var log in _logs.AsEnumerable().Reverse()) { <div class="@(log.IsError ? "ut-error" : "")">@log.Time.ToLocalTime().ToString("HH:mm:ss") — @log.Message</div> }</div>
+        }
+        @if(_hoverHeading is not null && _field is null)
+        {
+            <div class="ut-tooltip" role="tooltip" popover="manual"><div class="ut-tooltip-text">@_hoverHeading</div></div>
+        }
+        else if(_hover is not null && _field is null)
+        {
+            <div class="ut-tooltip" role="tooltip" popover="manual"><div class="ut-tooltip-text">@Tooltip(_hover)</div>
+                @if(_hover.Column.Collection is null && _hover.Difference.Changed) { <hr /><div class="ut-tooltip-text">Было: @_hover.Difference.Before</div> }
+            </div>
+        }
+        <TableFilter @ref="_filter" Query="@_query" Engine="@_engine" Rows="ReadRows" Data="@Data" FixedFilter="@FixedFilter" Changed="QueryChangedAsync" ChoiceContent="FilterContent" />
+        <AdvancedFilters @ref="_advancedFilters" Query="_query" Columns="_columns" Engine="_engine" Rows="ReadRows" Data="Data" FixedFilter="FixedFilter" Changed="QueryChangedAsync" />
+    }
+</div>
+@if(_contextMenu is not null)
+{
+    <div @key="_contextMenu" class="ut-row-menu" @ref="_menuHost" popover="manual" role="menu" @onkeydown="MenuKey" @onkeydown:stopPropagation="true">
+        <TableMenuItems Items="_menuItems" Context="_contextMenu" Selected="ExecuteMenuAsync" />
+    </div>
+}
+@if(_field is not null)
+{
+    <div class="ut-editor-overlay" @onclick="()=>_dialogEditor ? Task.CompletedTask : SaveCellAsync()" @oncontextmenu="CancelMenu" @oncontextmenu:preventDefault="true"></div>
+    <div class="ut-editor" style="@_editorStyle" @ref="_editorHost" @onkeydown="EditorKeyAsync" @onkeydown:stopPropagation="true">
+        @if(_dialogEditor)
+        {
+            <header class="ut-editor-title"><strong>@_field.Column.Title</strong></header>
+        }
+        @if(_field.Busy)
+        {
+            <div class="ut-status" role="status">@if(Options.CellLoadingTemplate is { } template) { @template } else { <MudProgressCircular Indeterminate="true" Size="Size.Small" /> }</div>
+        }
+        else if(_dialogEditor && _field.Column.ValueType==typeof(string))
+        {
+            <textarea class="ut-input ut-long-text" disabled="@_field.Busy" value="@_field.Value" @oninput="e=>_field.Value=e.Value?.ToString()"></textarea>
+        }
+        else { <TableFieldInput Field="@_field" Data="@Data" /> }
+        @if(_dialogEditor)
+        {
+            <div class="ut-buttons"><button disabled="@(_field.Busy || _unknown)" @onclick="SaveCellAsync">Сохранить</button><button disabled="@_field.Busy" @onclick="CloseEditorAsync">Отмена</button></div>
+        }
+        @if(_unknown) { <div class="ut-error">Результат неизвестен. Повтор заблокирован до сверки операции.</div> }
+    </div>
+}
+@code {
+    [Parameter,EditorRequired] public Type ModelType {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableLayoutStore LayoutStore {get;set;}=default!;
+    [Parameter] public Func<object,bool>? FixedFilter {get;set;}
+    [Parameter] public string Height {get;set;}="600px";
+    [Parameter] public RenderFragment? Toolbar {get;set;}
+    [Parameter] public EventCallback<CellContext> CollectionRequested {get;set;}
+    [Parameter] public EventCallback<CellContext> ReadOnlyCellClicked {get;set;}
+    [Parameter] public EventCallback<TableSelection> SelectionChanged {get;set;}
+    [Parameter] public EventCallback<RowOperationRequest> RowOperationRequested {get;set;}
+    private readonly HashSet<EntityKey> _selection=[];
+    private EntityKey? _anchor,_menuEntity;
+    private ElementReference _menuHost;
+    private double _menuX,_menuY;
+    private bool _selectionChanged;
+    public IReadOnlyList<object> SelectedObjects=>_rows.Where(row=>_selection.Contains(Key(row))).ToArray();
+    public IReadOnlyList<EntityKey> SelectedKeys=>SelectedObjects.Select(Key).ToArray();
+    public IReadOnlyList<Guid> SelectedIds=>SelectedKeys.Select(key=>key.Id).ToArray();
+    public async Task ClearSelectionAsync()
+    {
+        _selection.Clear(); _anchor=null;
+        await NotifySelectionAsync(); StateHasChanged();
+    }
+    private Task NotifySelectionAsync()=>SelectionChanged.InvokeAsync(new TableSelection(SelectedObjects,SelectedKeys));
+    private async Task SelectRowAsync(EntityKey key,MouseEventArgs e)
+    {
+        if(_field is not null) return;
+        var additive=e.CtrlKey || e.MetaKey;
+        var visibleRows=_flatRows.Where(x=>x.Row is not null).Select(x=>x.Row!).ToList();
+        var start=_anchor is { } anchor ? visibleRows.FindIndex(row=>Key(row)==anchor) : -1;
+        var end=visibleRows.FindIndex(row=>Key(row)==key);
+        if(e.ShiftKey && start>=0 && end>=0)
+        {
+            if(!additive) _selection.Clear();
+            for(var i=Math.Min(start,end);i<=Math.Max(start,end);i++) _selection.Add(Key(visibleRows[i]));
+        }
+        else
+        {
+            if(!additive) _selection.Clear();
+            if(!additive || !_selection.Remove(key)) _selection.Add(key);
+            _anchor=key;
+        }
+        await NotifySelectionAsync();
+    }
+    private Task TableKeyAsync(KeyboardEventArgs e)=>e.Key=="Escape" ? ClearSelectionAsync() : Task.CompletedTask;
+    private void OpenRowMenu(EntityKey key,MouseEventArgs e)
+    {
+        if(_field is not null || _bulkBusy) return;
+        var row=_rows.FirstOrDefault(row=>Key(row)==key);
+        if(row is null) return;
+        _hover=null; _hoverHeading=null; _menuX=e.ClientX; _menuY=e.ClientY;
+        _menuEntity=key;
+        _contextMenu=new(Data,row,null,SelectedObjects,TableMenuArea.Table | TableMenuArea.Row);
+        _menuItems=ObjectMenuItems(row);
+        StateHasChanged();
+    }
+    [JSInvokable]
+    public void CloseRowMenu() { _menuEntity=null; _contextMenu=null; StateHasChanged(); }
+    private void MenuKey(KeyboardEventArgs e) { if(e.Key=="Escape") CloseRowMenu(); }
+    private bool CanOperate(EntityKey key)=>_field is null && Data.CanEdit(key) && !Data.GetRowState(key).IsDeleted && !Dispatcher.IsBlocked(Data.Context.OperationScope(key));
+    private async Task OperateAsync(RowOperation operation)
+    {
+        if(_menuEntity is not { } key || !CanOperate(key)) return;
+        var row=ReadRows().FirstOrDefault(row=>Key(row)==key);
+        CloseRowMenu();
+        if(row is not null) await RowOperationRequested.InvokeAsync(new(row,key,operation));
+    }
+    [Parameter] public TimeSpan ConfirmationTimeout {get;set;}=TimeSpan.FromSeconds(30);
+    private IReadOnlyList<TableColumn> _columns=[];
+    private IEnumerable<TableColumn> Visible=>_columns.Where(c=>c.Visible).OrderBy(c=>c.Order).ThenBy(c=>c.Id,StringComparer.Ordinal);
+    private TableQueryEngine? _engine;
+    private ModelRegistration _registration=default!;
+    private List<object> _rows=[];
+    private int _total;
+    private QueryState _query=new();
+    private readonly List<TableNotice> _logs=[];
+    private bool _showLog,_showColumns,_disposed,_unknown,_focusEditor;
+    private bool _deferCellRefresh;
+    private CellContext? _hover,_editing;
+    private string? _hoverHeading;
+    private FieldDraft? _field;
+    private string _editorStyle="";
+    private TableFilter? _filter;
+    private ElementReference _root,_viewport,_editorHost;
+    private IJSObjectReference? _module,_controller;
+    private DotNetObjectReference<UniversalTable>? _self;
+    private BrowserQueryStore? _storage;
+    private ITableDataSource? _subscribed;
+    private readonly CancellationTokenSource _lifetime=new();
+    private bool _initialized;
+    private static string N(double value)=>value.ToString("0.###",CultureInfo.InvariantCulture);
+    private static string Width(TableColumn c)=>$"width:{N(c.Width)}px;min-width:{N(c.Width)}px;max-width:{N(c.Width)}px";
+    private EntityKey Key(object row)=>new(_registration.ObjectType,((IWebModel)row).Id);
+    private IReadOnlyList<object> ReadRows()=>Data.Rows(ModelType);
+    protected override async Task OnInitializedAsync()
+    {
+        _registration=Registry.Get(ModelType);
+        _columns=_registration.CreateColumns(Services);
+        _defaultLayout=_columns.Select(c=>new ColumnLayout(c.Id,c.Order,c.Width,c.Visible)).ToArray();
+        _customMenu=_registration.ConfigureMenu?.Invoke(Services) ?? [];
+        var settings=await LayoutStore.LoadAsync(Data.Context.SettingsType(_registration.ObjectType),Data.Context.UserId,_lifetime.Token);
+        ColumnMetadata.ApplyLayout(_columns,settings); _engine=new(_columns);
+        _subscribed=Data; Data.Invalidated+=Invalidated; _initialized=true; Rebuild();
+    }
+    protected override void OnParametersSet()
+    {
+        if(_initialized)
+        {
+            if(_registration.Type!=ModelType || !ReferenceEquals(_subscribed,Data)) throw new InvalidOperationException("Use @key when replacing table model or data source.");
+            Rebuild();
+        }
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if(_engine is null) return;
+        if(_module is null)
+        {
+            _module=await JS.InvokeAsync<IJSObjectReference>("import","./_content/UniversalTables/table-ui.js");
+            _self=DotNetObjectReference.Create(this);
+            _controller=await _module.InvokeAsync<IJSObjectReference>("attach",_root,_viewport,_self);
+            _storage=new(JS);
+            try
+            {
+                var saved=await _storage.LoadAsync(Data.Context,_registration.ObjectType);
+                if(saved is not null)
+                {
+                    var restored=_engine.Restore(saved); _query=restored.State;
+                    foreach(var warning in restored.Warnings) Log(warning,false);
+                    Rebuild(); StateHasChanged();
+                }
+            }
+            catch(Exception ex) { Log("Не удалось восстановить фильтры: "+ex.Message,true); StateHasChanged(); }
+        }
+        if(_controller is not null) await _controller.InvokeVoidAsync("tooltip");
+        if(_contextMenu is not null) await _module.InvokeVoidAsync("showRowMenu",_menuHost,_menuX,_menuY,_root);
+        if(_selectionChanged) { _selectionChanged=false; await NotifySelectionAsync(); }
+        if(_field is not null && !_dialogEditor && _editing is { } editing && _controller is not null)
+            await _controller.InvokeVoidAsync("trackEditor",_editorHost,editing.Entity.Id.ToString(),editing.Column.Id);
+        if(_focusEditor && _field is not null)
+        {
+            _focusEditor=false;
+            await _module.InvokeVoidAsync("focusEditor",_editorHost);
+        }
+    }
+    private void Rebuild()
+    {
+        // Keep the editor's anchor visible while saving, including errors awaiting dismissal.
+        if(_engine is null || _deferCellRefresh) return;
+        var result=_engine.Apply(ReadRows(),_query,FixedFilter); _rows=result.Rows.ToList(); _total=result.ContextCount;
+        BuildGroups();
+        var keys=_rows.Select(Key).ToHashSet();
+        if(_selection.RemoveWhere(key=>!keys.Contains(key))>0) _selectionChanged=true;
+        if(_anchor is { } anchor && !keys.Contains(anchor)) _anchor=null;
+        if(_menuEntity is { } menu && !keys.Contains(menu)) CloseRowMenu();
+    }
+    private void Invalidated(DataInvalidation change)=>_ = UpdateFromEventAsync();
+    private async Task UpdateFromEventAsync()
+    {
+        try { await InvokeAsync(()=>{if(!_disposed){ Rebuild(); StateHasChanged(); }}); }
+        catch(Exception ex) { if(!_disposed) await DispatchExceptionAsync(ex); }
+    }
+    public Task RefreshAsync()=>InvokeAsync(()=>{Rebuild();StateHasChanged();});
+    private RenderFragment Display(object row,TableColumn column)
+    {
+        if(column.Display is not null) return column.Display(row);
+        return builder => builder.AddContent(0,DisplayText(row,column));
+    }
+    private string DisplayText(object row,TableColumn column)
+    {
+        if(column.Collection is not null) return (column.Read(row) as System.Collections.ICollection)?.Count.ToString() ?? "0";
+        if(column.Reference is { } reference)
+        {
+            var value=FormDraft.ReadPath(row,reference.ForeignKeyPath);
+            return value is Guid id ? Data.ResolveReference(reference.TargetType,id)?.Label ?? id.ToString() : "";
+        }
+        return Options.Format(column.Read(row));
+    }
+    private RenderFragment Tooltip(CellContext cell)
+    {
+        if(cell.Column.TooltipTemplate is { } template) return template(cell);
+        if(cell.Column.Reference is { } reference)
+        {
+            var value=FormDraft.ReadPath(cell.Row,reference.ForeignKeyPath);
+            if(value is null || value is string {Length:0}) return DescriptionTooltip(null);
+            if(value is Guid id && Data.ResolveReference(reference.TargetType,id) is { } option)
+                return DescriptionTooltip(option.Description ?? (cell.Value as IWebModel)?.ToDescription() ?? option.Label);
+        }
+        if(cell.Value is null || cell.Value is string {Length:0}) return DescriptionTooltip(null);
+        if(cell.Value is IWebModel model) return DescriptionTooltip(model.ToDescription());
+        return cell.Column.CellTemplate?.Invoke(cell) ?? Display(cell.Row,cell.Column);
+    }
+    private static RenderFragment DescriptionTooltip(string? description)=>builder=>
+    {
+        builder.OpenElement(0,"div");
+        builder.AddAttribute(1,"class","ut-tooltip-description");
+        builder.AddContent(2,TooltipText.Format(description));
+        builder.CloseElement();
+    };
+    private RenderFragment FilterContent(FilterChoiceContext context)
+    {
+        if(context.Column.FilterTemplate is { } template) return template(context);
+        if(context.Row is { } row)
+        {
+            var cell=new CellContext(row,Key(row),context.Column,context.Column.Read(row),Data.GetDifference(new(Key(row),context.Column.Id)));
+            return context.Column.CellTemplate?.Invoke(cell) ?? Display(row,context.Column);
+        }
+        return builder=>builder.AddContent(0,context.Label);
+    }
+    private async Task SortAsync(TableColumn column,bool additive)
+    {
+        if(_field is not null) return;
+        var next=_query.Copy(); TableQueryEngine.ToggleSort(next,column.Id,additive); await QueryChangedAsync(next);
+    }
+    private void OpenFilter(TableColumn column)
+    {
+        if(_field is not null) return;
+        try { _filter?.Open(column); } catch(Exception ex) { Error(ex.Message); }
+    }
+    private AdvancedFilters? _advancedFilters;
+    private void OpenAdvancedFilters()
+    {
+        if(_field is not null) return;
+        _filter?.Close(); CloseRowMenu();
+        _advancedFilters?.Open();
+    }
+    private async Task QueryChangedAsync(QueryState state)
+    {
+        _query=state; Rebuild();
+        if(_storage is not null)
+            try { await _storage.SaveAsync(Data.Context,_registration.ObjectType,_query); } catch(Exception ex) { Error("Не удалось сохранить фильтры: "+ex.Message); }
+    }
+    private async Task VisibilityAsync(TableColumn column,bool visible) { column.Visible=visible; await SaveLayoutAsync(); }
+    private async Task SaveLayoutAsync()
+    {
+        try { await LayoutStore.SaveUserAsync(Data.Context.SettingsType(_registration.ObjectType),Data.Context.UserId,_columns.Select(c=>new ColumnLayout(c.Id,c.Order,c.Width,c.Visible)).ToArray(),_lifetime.Token); }
+        catch(Exception ex) { Error("Не удалось сохранить столбцы: "+ex.Message); }
+    }
+    [JSInvokable] public async Task ResizeColumn(string id,double width)
+    {
+        if(_field is not null || !double.IsFinite(width)) return;
+        var column=_columns.Single(c=>c.Id==id); column.Width=Math.Max(column.MinWidth,width); await SaveLayoutAsync(); StateHasChanged();
+    }
+    [JSInvokable] public async Task MoveColumn(string source,string target,bool after)
+    {
+        if(_field is not null || source==target) return;
+        var columns=_columns.OrderBy(c=>c.Order).ToList(); var item=columns.Single(c=>c.Id==source); var destination=columns.Single(c=>c.Id==target);
+        columns.Remove(item); columns.Insert(columns.IndexOf(destination)+(after ? 1 : 0),item);
+        for(var i=0;i<columns.Count;i++) columns[i].Order=i;
+        await SaveLayoutAsync(); StateHasChanged();
+    }
+    private async Task ActivateAsync(CellContext cell)
+    {
+        if(_field is not null || _bulkBusy) return;
+        if(cell.Column.Collection is not null) { await CollectionRequested.InvokeAsync(cell); return; }
+        if(!cell.Column.CellEditable || Data.GetRowState(cell.Entity).IsDeleted || !Data.CanEdit(cell.Entity) || Data.Context.Mode==TableMode.Ticket && cell.Column.OneToOne)
+        { await ReadOnlyCellClicked.InvokeAsync(cell); return; }
+        if(Dispatcher.IsBlocked(Data.Context.OperationScope(cell.Entity))) { Error("Есть неподтверждённая операция. Сначала выполните сверку."); return; }
+        if(_module is null) return;
+        var rect=await _module.InvokeAsync<double[]?>("cellRect",_root,cell.Entity.Id.ToString(),cell.Column.Id);
+        if(rect is null) return;
+        var value=cell.Column.Reference is { } reference ? FormDraft.ReadPath(cell.Row,reference.ForeignKeyPath) : cell.Value;
+        _editing=cell; _field=new(){Column=cell.Column,OriginalValue=value,Value=value}; _unknown=false;
+        _editorStyle=$"left:{N(rect[0])}px;top:{N(rect[1])}px;width:{N(rect[2])}px;min-height:30px";
+        if(_controller is not null) await _controller.InvokeVoidAsync("lock",true);
+        _focusEditor=true; _hover=null;
+    }
+    private async Task SaveCellAsync()
+    {
+        var field=_field; var cell=_editing;
+        if(field is null || cell is null || field.Busy || _unknown) return;
+        if(field.Error is not null) { Error(field.Error); return; }
+        if(Equals(field.OriginalValue,field.Value))
+        {
+            await CloseEditorAsync();
+            return;
+        }
+        if(!Data.CanEdit(cell.Entity) || Data.GetRowState(cell.Entity).IsDeleted) { Error("Редактирование больше недоступно."); return; }
+        CommandEnvelope command;
+        try
+        {
+            var draft=new FormDraft(_registration,[cell.Column],Data.Context,ChangeKind.Edit,cell.Row,cellOperation:true);
+            var target=draft.Fields.Single();
+            if(target.ReadOnly) throw new InvalidOperationException("Поле недоступно для изменения.");
+            target.Value=field.Value; target.IncludeInSubmission=true;
+            // Cell operations must not inherit form-only visibility/editability restrictions.
+            var request=draft.Build();
+            if(request.Fields.Count==0 && request.Collections.Count==0 && request.FixedValues.Count==0)
+            {
+                await CloseEditorAsync();
+                return;
+            }
+            command=CommandEnvelope.Create(Data.Context,request);
+        }
+        catch(Exception ex) { Error(ex.Message); return; }
+        field.Busy=true;
+        _deferCellRefresh=true;
+        StateHasChanged();
+        DispatchResult result;
+        try { result=await Dispatcher.SendAsync(command,ConfirmationTimeout,_lifetime.Token); }
+        catch(Exception ex)
+        {
+            field.Busy=false;
+            _deferCellRefresh=false;
+            if(!_disposed)
+            {
+                Rebuild();
+                Error(ex.Message);
+            }
+            return;
+        }
+        field.Busy=false;
+        _deferCellRefresh=false;
+        if(_disposed) return;
+        if(result.Status is DispatchStatus.Confirmed or DispatchStatus.NotChanged)
+        {
+            Log(result.Message ?? (result.Status==DispatchStatus.NotChanged ? "Изменений нет" : "Изменение подтверждено"),false,result.ActionId);
+            await CloseEditorAsync();
+            Rebuild();
+        }
+        else
+        {
+            Rebuild();
+            _unknown=result.Status==DispatchStatus.Unknown;
+            Error(result.Message ?? "Изменение отклонено",result.ActionId);
+        }
+    }
+    private async Task EditorKeyAsync(KeyboardEventArgs e)
+    {
+        if(e.Key=="Escape") await CloseEditorAsync();
+        else if(e.Key=="Enter" && !_dialogEditor && _field?.Column.Reference is null && _field?.Column.EditorTemplate is null) await SaveCellAsync();
+    }
+    [JSInvokable]
+    public async Task CancelCellEditingAsync()
+    {
+        if(_disposed || _field is null) return;
+        await CloseEditorAsync();
+        StateHasChanged();
+    }
+    private async Task CloseEditorAsync()
+    {
+        if(_field?.Busy==true) return;
+        _field=null; _editing=null; _dialogEditor=false; CloseRowMenu();
+        if(_deferCellRefresh)
+        {
+            _deferCellRefresh=false;
+            Rebuild();
+        }
+        if(_controller is not null) await _controller.InvokeVoidAsync("lock",false);
+    }
+    public Task AddNoticeAsync(TableNotice notice)=>InvokeAsync(()=>{Log(notice.Message,notice.IsError,notice.ActionId);StateHasChanged();});
+    private void Log(string text,bool error,Guid? actionId=null)
+    {
+        if(actionId is not null && _logs.Any(l=>l.ActionId==actionId && l.Message==text)) return;
+        _logs.Add(new(DateTimeOffset.UtcNow,text,error,actionId)); if(_logs.Count>30) _logs.RemoveAt(0);
+    }
+    private void Error(string text,Guid? actionId=null) { Log(text,true,actionId); Snackbar.Add(text,Severity.Error); }
+    public async ValueTask DisposeAsync()
+    {
+        _disposed=true; _lifetime.Cancel();
+        if(_subscribed is not null) _subscribed.Invalidated-=Invalidated;
+        try
+        {
+            if(_controller is not null) { await _controller.InvokeVoidAsync("dispose"); await _controller.DisposeAsync(); }
+            if(_module is not null) await _module.DisposeAsync();
+            if(_storage is not null) await _storage.DisposeAsync();
+        }
+        catch(JSDisconnectedException) { }
+        _self?.Dispose(); _lifetime.Dispose();
+    }
+}

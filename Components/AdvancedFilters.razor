@@ -1,0 +1,51 @@
+@namespace UniversalTables.Components
+@using UniversalTables.Query
+@if(_draft is not null)
+{
+    <div class="ut-complex-backdrop"></div>
+    <section class="@(_maximized ? "ut-complex-filter ut-complex-filter-maximized" : "ut-complex-filter")" role="dialog" aria-modal="true" aria-label="Фильтры" tabindex="-1" @onkeydown="KeyDown" @onkeydown:stopPropagation="true">
+        <header>
+            <h3>Фильтры</h3>
+            <div class="ut-complex-dialog-actions">
+                <button type="button" title="@(_maximized ? "Восстановить размер" : "Развернуть")" aria-label="@(_maximized ? "Восстановить размер" : "Развернуть")" aria-pressed="@(_maximized ? "true" : "false")" @onclick="()=>_maximized=!_maximized"><span aria-hidden="true">@(_maximized ? "❐" : "□")</span></button>
+                <button type="button" aria-label="Закрыть" @onclick="Close">×</button>
+            </div>
+        </header>
+        <p>Условия внутри группы объединяются через AND или OR. Вложенные группы задают скобки. Обычные фильтры столбцов применяются дополнительно через AND.</p>
+        <FilterGroupEditor @key="_draft" Group="_draft" Columns="Columns" Engine="Engine" Rows="Rows" Data="Data" FixedFilter="FixedFilter" />
+        @if(_error is not null) { <div class="ut-error" role="alert">@_error</div> }
+        <footer class="ut-buttons">
+            <button type="button" @onclick="ApplyAsync">Применить</button>
+            <button type="button" @onclick="Reset">Сбросить</button>
+            <button type="button" @onclick="Close">Отмена</button>
+        </footer>
+    </section>
+}
+@code {
+    [Parameter,EditorRequired] public QueryState Query {get;set;}=default!;
+    [Parameter,EditorRequired] public IReadOnlyList<TableColumn> Columns {get;set;}=default!;
+    [Parameter,EditorRequired] public TableQueryEngine Engine {get;set;}=default!;
+    [Parameter,EditorRequired] public Func<IReadOnlyList<object>> Rows {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter] public Func<object,bool>? FixedFilter {get;set;}
+    [Parameter] public EventCallback<QueryState> Changed {get;set;}
+    private FilterGroup? _draft;
+    private string? _error;
+    private bool _maximized;
+    public void Open() { _draft=Query.AdvancedFilter?.Copy() ?? new(); _error=null; _maximized=false; StateHasChanged(); }
+    private void Close() { _draft=null; _error=null; }
+    private void Reset() { _draft=new(); _error=null; }
+    private void KeyDown(KeyboardEventArgs e) { if(e.Key=="Escape") Close(); }
+    private async Task ApplyAsync()
+    {
+        if(_draft is null) return;
+        try
+        {
+            var next=Query.Copy();
+            next.AdvancedFilter=_draft.Rules.Count==0 && _draft.Groups.Count==0 ? null : _draft.Copy();
+            Engine.Apply(Rows(),next,FixedFilter);
+            await Changed.InvokeAsync(next); Close();
+        }
+        catch(Exception ex) { _error=ex.Message; }
+    }
+}

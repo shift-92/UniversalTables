@@ -1,0 +1,36 @@
+@namespace UniversalTables.Components
+@inject CommandDispatcher Dispatcher
+<BlockingOperation Busy="_checking">
+<section class="ut4-recovery">
+    <header><strong>Неподтверждённые операции</strong><button type="button" @onclick="Refresh">Обновить список</button></header>
+    @foreach(var pending in _pending)
+    {
+        <div class="ut4-recovery-row" @key="pending.Command.ActionId">
+            <span>@pending.Command.ActionId<br />@pending.Command.Scope</span>
+            <button type="button" disabled="@(pending.Active || _checking)" @onclick="()=>Check(pending.Command.ActionId)">
+                @(pending.Active ? "Выполняется" : "Сверить с сервером")
+            </button>
+        </div>
+    }
+    @if(_pending.Count==0) { <p>Нет неподтверждённых операций.</p> }
+    @if(_message is not null) { <p role="status">@_message</p> }
+</section>
+</BlockingOperation>
+@code {
+    private IReadOnlyList<PendingOperation> _pending=[];
+    private bool _checking;
+    private string? _message;
+    protected override void OnInitialized()=>Refresh();
+    private void Refresh()=>_pending=Dispatcher.Pending;
+    private async Task Check(Guid actionId)
+    {
+        _checking=true; _message=null;
+        try
+        {
+            var outcome=await Dispatcher.ReconcileAsync(actionId);
+            _message=outcome is null ? "Сервер пока не подтвердил результат. Повторная отправка остаётся заблокированной." : $"{outcome.Status}: {outcome.Message}";
+        }
+        catch(Exception ex) { _message=ex.Message; }
+        finally { _checking=false; Refresh(); }
+    }
+}

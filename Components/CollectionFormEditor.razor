@@ -1,0 +1,91 @@
+@namespace UniversalTables.Components
+@using UniversalTables.Drafts
+@inject TableOptions Options
+<section class="ut4-collection">
+    <header>
+        <strong>@Draft.Column.Title</strong>
+        <span>@Draft.Rows.Count(r=>!r.Deleted)</span>
+        <button type="button" disabled="@Disabled" @onclick="Add">Добавить</button>
+    </header>
+    <div class="ut4-child-scroll">
+        <div class="ut4-child-content" style="@($"width:{Width}px")">
+            <div class="ut4-child-row ut4-child-head">
+                <div class="ut4-child-actions">Действия</div>
+                @foreach(var column in Columns)
+                {
+                    <div class="ut4-child-cell" style="@CellWidth(column)" title="@column.Title">@column.Title</div>
+                }
+            </div>
+            <Virtualize Items="Draft.Rows" Context="row" ItemSize="30" OverscanCount="5">
+                <div @key="row.Form.Root.Id" class="@(row.Deleted ? "ut4-child-row deleted" : "ut4-child-row")">
+                    <div class="ut4-child-actions">
+                        @if(row.Deleted)
+                        {
+                            <button type="button" disabled="@Disabled" @onclick="()=>Restore(row)">Вернуть</button>
+                        }
+                        else
+                        {
+                            <button type="button" disabled="@Disabled" @onclick="()=>Edit(row)">✎</button>
+                            <button type="button" disabled="@Disabled" @onclick="()=>Delete(row)">×</button>
+                        }
+                    </div>
+                    @foreach(var column in Columns)
+                    {
+                        var field=row.Form.Fields.FirstOrDefault(f=>f.Column.Id==column.Id);
+                        var text=Text(field);
+                        <div class="ut4-child-cell" style="@CellWidth(column)" title="@text">@text</div>
+                    }
+                </div>
+            </Virtualize>
+        </div>
+    </div>
+    @if(_edit is not null)
+    {
+        <section class="ut4-child-edit">
+            <header><strong>@(_edit.Added ? "Новая запись" : "Редактирование записи")</strong></header>
+            <div class="ut4-fields">
+                @foreach(var field in _edit.Form.Fields)
+                {
+                    <div class="ut4-field" @key="field.Column.Id">
+                        <label>@field.Column.Title</label>
+                        <TableFieldInput Field="field" Data="Data" />
+                    </div>
+                }
+            </div>
+            <footer><button type="button" disabled="@Disabled" @onclick="Finish">Готово</button></footer>
+            @if(_error is not null) { <div class="ut4-error">@_error</div> }
+        </section>
+    }
+</section>
+@code {
+    [Parameter,EditorRequired] public CollectionDraft Draft {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter,EditorRequired] public IReadOnlyList<TableColumn> Columns {get;set;}=default!;
+    [Parameter] public bool Disabled {get;set;}
+    private ChildDraftRow? _edit;
+    private string? _error;
+    private string Width=>(110+Columns.Sum(c=>c.Width)).ToString("0.###",CultureInfo.InvariantCulture);
+    private static string CellWidth(TableColumn c)=>$"width:{c.Width.ToString("0.###",CultureInfo.InvariantCulture)}px";
+    private string Text(FieldDraft? field)
+    {
+        if(field is null) return "";
+        if(field.Column.Reference is { } reference && field.Value is Guid id)
+            return Data.ResolveReference(reference.TargetType,id)?.Label ?? id.ToString();
+        return Options.Format(field.Value);
+    }
+    protected override void OnParametersSet()
+    {
+        foreach(var row in Draft.Rows)
+            foreach(var field in row.Form.Fields) field.Busy=Disabled;
+    }
+    private void Add() { if(Disabled) return; _edit=Draft.Add(); _error=null; }
+    private void Edit(ChildDraftRow row) { if(Disabled) return; _edit=row; _error=null; }
+    private void Delete(ChildDraftRow row) { if(Disabled) return; Draft.Delete(row); if(ReferenceEquals(_edit,row)) _edit=null; }
+    private void Restore(ChildDraftRow row) { if(!Disabled) Draft.Restore(row); }
+    private void Finish()
+    {
+        if(Disabled || _edit is null) return;
+        try { _edit.Form.Build(); _edit=null; _error=null; }
+        catch(Exception ex) { _error=ex.Message; }
+    }
+}

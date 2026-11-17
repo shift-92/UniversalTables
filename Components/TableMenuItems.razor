@@ -1,0 +1,28 @@
+@namespace UniversalTables.Components
+@foreach(var item in Items.OrderBy(x=>x.Order).Where(x=>(x.Areas & Context.Area)!=0 && (x.Visible?.Invoke(Context) ?? true)))
+{
+    @if(item.Separator is TableMenuSeparator.Top or TableMenuSeparator.Both)
+    {
+        <div class="ut-menu-separator" role="separator"></div>
+    }
+    @if(item.Children.Count>0)
+    {
+        <div class="ut-menu-branch" @key="item.Id">
+            <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" disabled="@(!(item.Enabled?.Invoke(Context) ?? true))">@item.Title <span aria-hidden="true">›</span></button>
+            <div class="ut-row-menu ut-submenu" popover="manual" role="menu"><TableMenuItems Items="item.Children" Context="Context" Selected="Selected" /></div>
+        </div>
+    }
+    else
+    {
+        <button class="justify-start" type="button" role="menuitem" disabled="@(!(item.Enabled?.Invoke(Context) ?? true))" @onclick="()=>Selected.InvokeAsync(item)">@item.Title</button>
+    }
+    @if(item.Separator is TableMenuSeparator.Bottom or TableMenuSeparator.Both)
+    {
+        <div class="ut-menu-separator" role="separator"></div>
+    }
+}
+@code {
+    [Parameter,EditorRequired] public IReadOnlyList<TableMenuItem> Items {get;set;}=[];
+    [Parameter,EditorRequired] public TableMenuContext Context {get;set;}=default!;
+    [Parameter] public EventCallback<TableMenuItem> Selected {get;set;}
+}

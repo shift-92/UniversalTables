@@ -1,0 +1,16 @@
+@namespace UniversalTables.Components
+@inject TableOptions Options
+<div style="position:relative" aria-busy="@Busy">
+    <div inert="@(Busy ? "inert" : null)">@ChildContent</div>
+    @if(Busy)
+    {
+        <div role="status" aria-live="polite" style="position:absolute;inset:0;z-index:1400;display:flex;align-items:center;justify-content:center;background:#0005;pointer-events:auto" @onkeydown:stopPropagation="true">
+            @if(Options.BlockingOperationTemplate is { } template) { @template }
+            else { <MudProgressCircular Indeterminate="true" /> }
+        </div>
+    }
+</div>
+@code {
+    [Parameter] public bool Busy {get;set;}
+    [Parameter] public RenderFragment? ChildContent {get;set;}
+}

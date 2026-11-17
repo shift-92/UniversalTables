@@ -1,0 +1,219 @@
+@namespace UniversalTables.Components
+@using System.Text.Json
+@using System.ComponentModel
+@using UniversalTables.Query
+@inject TableOptions Options
+@if(_column is not null)
+{
+    @if(!Inline) { <div class="ut-filter-overlay" @onclick="Close"></div> }
+    <section class="@(Inline ? "ut-inline-filter" : "ut-filter")" data-filter-column="@_column.Id" popover="@(Inline ? null : "manual")" role="@(Inline ? "group" : "dialog")" aria-label="Фильтр" @onkeydown="KeyDown" @onkeydown:stopPropagation="true">
+        <header><strong>@_column.Title</strong><button type="button" @onclick="Close">×</button></header>
+        @if(IsChoice)
+        {
+            <div role="status" aria-live="polite">Выбрано значений: @_selected.Count</div>
+        }
+        <select class="ut-input" @bind="OperatorKey">
+            @foreach(var op in FilterSchema.Operators(_column)) { <option value="@op">@OperatorLabel(op)</option> }
+            @foreach(var op in _column.CustomOperators) { <option value="@("custom:"+op.Id)">@op.Title</option> }
+        </select>
+        @if(_operator==Models.FilterOperator.DateTree)
+        {
+            <DateFilterTree @key="_column.Id" @ref="_dateTree" Dates="@_dates" Initial="@_periods" InitialEmpty="@_dateEmpty" Nullable="@(Nullable.GetUnderlyingType(_column.FilterType) is not null)" Changed="ApplyImmediateAsync" />
+        }
+        else if(_operator is not (Models.FilterOperator.Empty or Models.FilterOperator.NotEmpty or Models.FilterOperator.Custom))
+        {
+            @if(IsChoice)
+            {
+                <input class="ut-input" placeholder="Поиск" @bind="_search" @bind:event="oninput" />
+                <div class="ut-buttons">
+                    <button @onclick="SelectVisible">Выбрать найденные</button><button @onclick="ClearSelected">Снять выбор</button>
+                    <div style="position:relative">
+                        <button type="button" aria-expanded="@_sortMenuOpen" aria-haspopup="true" @onclick="()=>_sortMenuOpen=!_sortMenuOpen">Сортировка: @ChoiceSortLabel(_choiceSort) ▾</button>
+                        @if(_sortMenuOpen)
+                        {
+                            <div role="group" aria-label="Сортировка значений фильтра" style="position:absolute;right:0;z-index:1;display:flex;flex-direction:column;min-width:180px;background:var(--mud-palette-surface);border:1px solid var(--mud-palette-divider)">
+                                @foreach(var sort in Enum.GetValues<ChoiceSort>())
+                                {
+                                    <button type="button" aria-pressed="@(_choiceSort==sort)" @onclick="()=>SetChoiceSort(sort)">@(_choiceSort==sort ? "✓ " : "")@ChoiceSortLabel(sort)</button>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="ut-choices">
+                    <Virtualize Items="@VisibleChoices" Context="choice" ItemSize="30">
+                        <label class="ut-choice" title="@choice.Label">
+                            <input type="checkbox" checked="@_selected.Contains(choice.Key)" @onchange="e=>Toggle(choice.Key,e.Value is true)" />
+                            <span>@ChoiceContent(new FilterChoiceContext(_column,choice.Row,choice.Value,choice.Label,choice.Available)) (@choice.Count)</span>
+                        </label>
+                    </Virtualize>
+                </div>
+            }
+            else
+            {
+                <input class="ut-input" type="@InputType" step="any" placeholder="Значение" value="@_first" @onchange="e=>_first=e.Value?.ToString() ?? string.Empty" />
+                @if(_operator==Models.FilterOperator.Between) { <input class="ut-input" type="@InputType" step="any" placeholder="Верхняя граница" value="@_second" @onchange="e=>_second=e.Value?.ToString() ?? string.Empty" /> }
+            }
+        }
+        @if(_error is not null) { <div class="ut-error">@_error</div> }
+        <footer>
+            @if(!Inline) { <button type="button" @onclick="ResetAsync">Сбросить</button> }
+            @if(!IsImmediate)
+            {
+                <button type="button" @onclick="Close">Отмена</button>
+                <button type="button" @onclick="ApplyAsync">@(Inline ? "Сохранить условие" : "Применить")</button>
+            }
+        </footer>
+    </section>
+}
+@code {
+    [Parameter,EditorRequired] public QueryState Query {get;set;}=default!;
+    [Parameter,EditorRequired] public TableQueryEngine Engine {get;set;}=default!;
+    [Parameter,EditorRequired] public Func<IReadOnlyList<object>> Rows {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter] public Func<object,bool>? FixedFilter {get;set;}
+    [Parameter] public bool Inline {get;set;}
+    [Parameter] public EventCallback<QueryState> Changed {get;set;}
+    [Parameter] public RenderFragment<FilterChoiceContext> ChoiceContent {get;set;}=context=>builder=>builder.AddContent(0,context.Label);
+    private TableColumn? _column;
+    private Models.FilterOperator _operator;
+    private string? _customId;
+    private DateFilterTree? _dateTree;
+    private List<DateOnly> _dates=[];
+    private List<CalendarPeriod> _periods=[];
+    private bool _dateEmpty;
+    private string InputType => Options.Culture is not null || _column is null ? "text" : FilterSchema.ScalarType(_column)==typeof(DateOnly) ? "date" : FilterSchema.ScalarType(_column)==typeof(DateTime) ? "datetime-local" : "text";
+    private string OperatorKey
+    {
+        get => _operator==Models.FilterOperator.Custom ? "custom:"+_customId : _operator.ToString();
+        set
+        {
+            if(_operator==Models.FilterOperator.DateTree && _dateTree is not null) { _periods=_dateTree.Periods.ToList(); _dateEmpty=_dateTree.IncludeEmpty; _dateTree=null; }
+            if(value.StartsWith("custom:",StringComparison.Ordinal)) { _operator=Models.FilterOperator.Custom; _customId=value[7..]; }
+            else { _operator=Enum.Parse<Models.FilterOperator>(value); _customId=null; }
+        }
+    }
+    private List<FilterChoice> _choices=[];
+    private HashSet<string> _selected=new(StringComparer.Ordinal);
+    private string _search="",_first="",_second="";
+    private string? _error;
+    private bool IsImmediate=>!Inline && _operator is (Models.FilterOperator.Array or Models.FilterOperator.DateTree);
+    private bool IsChoice=>_operator==Models.FilterOperator.Array || ((_column is null || !FilterSchema.IsDate(_column)) && _operator is (Models.FilterOperator.Equal or Models.FilterOperator.NotEqual or Models.FilterOperator.Any or Models.FilterOperator.None or Models.FilterOperator.All));
+    private bool _sortMenuOpen;
+    private void SetChoiceSort(ChoiceSort sort) { _choiceSort=sort; _sortMenuOpen=false; }
+    private object? ChoiceValue(FilterChoice choice)=>_column?.FilterChoiceValue is { } selector ? choice.Row is { } row ? selector(row) : null : choice.Label;
+    private string ChoiceSearchText(FilterChoice choice)=>_column?.FilterChoiceValue is not null && choice.Row is null ? choice.Label : Options.Format(ChoiceValue(choice));
+    private enum ChoiceSort { LabelAscending, LabelDescending, CountAscending, CountDescending }
+    private ChoiceSort _choiceSort=ChoiceSort.LabelAscending;
+    private static string ChoiceSortLabel(ChoiceSort sort)=>sort switch
+    {
+        ChoiceSort.LabelAscending=>"А → Я",
+        ChoiceSort.LabelDescending=>"Я → А",
+        ChoiceSort.CountAscending=>"Количество ↑",
+        ChoiceSort.CountDescending=>"Количество ↓",
+        _=>sort.ToString()
+    };
+    private List<FilterChoice> VisibleChoices
+    {
+        get
+        {
+            var choices=_choices.Where(c=>ChoiceSearchText(c).Contains(_search,StringComparison.CurrentCultureIgnoreCase));
+            return (_choiceSort switch
+            {
+                ChoiceSort.LabelDescending=>choices.OrderByDescending(ChoiceValue,ScalarOrder.Instance),
+                ChoiceSort.CountAscending=>choices.OrderBy(c=>c.Count).ThenBy(ChoiceValue,ScalarOrder.Instance),
+                ChoiceSort.CountDescending=>choices.OrderByDescending(c=>c.Count).ThenBy(ChoiceValue,ScalarOrder.Instance),
+                _=>choices.OrderBy(ChoiceValue,ScalarOrder.Instance)
+            }).ToList();
+        }
+    }
+    public void Open(TableColumn column)
+    {
+        _column=column; _error=null; _search=""; _first=""; _second=""; _selected.Clear();
+        _choiceSort=ChoiceSort.LabelAscending; _sortMenuOpen=false;
+        _dateTree=null; _periods=[]; _dateEmpty=false; _customId=null;
+        _choices=column.CustomOperators.Count>0 && !FilterSchema.IsDate(column) && column.FilterKind==FilterKind.Scalar && !IsScalar(column.FilterType)
+            ? [] : Engine.Choices(Rows(),Query,column.Id,FixedFilter,(type,id)=>Data.ResolveReference(type,id)?.Label).ToList();
+        _dates=FilterSchema.IsDate(column) ? Engine.Apply(Rows(),Query,FixedFilter,column.Id).Rows.Select(r=>CalendarPeriod.Date(column.FilterValue(r))).Where(d=>d.HasValue).Select(d=>d!.Value).Distinct().Order().ToList() : [];
+        var saved=Query.Filters.FirstOrDefault(f=>f.ColumnId==column.Id);
+        _operator=saved?.Operator ?? FilterSchema.DefaultOperator(column);
+        if(saved is null && FilterSchema.Operators(column).Count==0) { _operator=Models.FilterOperator.Custom; _customId=column.CustomOperators[0].Id; }
+        if(saved is not null)
+        {
+            _customId=saved.CustomOperatorId;
+            if(saved.Operator==Models.FilterOperator.DateTree)
+            {
+                _periods=saved.Values.Where(v=>v.ValueKind!=JsonValueKind.Null).Select(v=>v.Deserialize<CalendarPeriod>(TableJson.Options)!).ToList();
+                _dateEmpty=saved.Values.Any(v=>v.ValueKind==JsonValueKind.Null);
+            }
+            foreach(var value in saved.Values) _selected.Add(value.GetRawText());
+            if(saved.Values.Count>0) _first=Format(saved.Values[0]);
+            if(saved.Values.Count>1) _second=Format(saved.Values[1]);
+        }
+        StateHasChanged();
+    }
+    private string Format(JsonElement value)
+    {
+        try { return FilterSchema.ReadValue(value,_column!.FilterType) switch { DateOnly d when Options.Culture is null=>d.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture), DateTime d when Options.Culture is null=>d.ToString("yyyy-MM-ddTHH:mm:ss.fffffff",CultureInfo.InvariantCulture), var other=>Options.Format(other) }; }
+        catch { return value.ToString(); }
+    }
+    private async Task Toggle(string key,bool on) { if(on) _selected.Add(key); else _selected.Remove(key); await ApplyImmediateAsync(); }
+    private async Task SelectVisible() { foreach(var choice in VisibleChoices) _selected.Add(choice.Key); await ApplyImmediateAsync(); }
+    private async Task ClearSelected() { _selected.Clear(); await ApplyImmediateAsync(); }
+    public void Close() { _column=null; StateHasChanged(); }
+    private void KeyDown(KeyboardEventArgs e) { if(e.Key=="Escape") Close(); }
+    private JsonElement Parse(string text)
+    {
+        var type=FilterSchema.ScalarType(_column!);
+        object? value=type==typeof(DateOnly) ? DateOnly.Parse(text,Options.Culture ?? CultureInfo.InvariantCulture) : type==typeof(DateTime) ? DateTime.Parse(text,Options.Culture ?? CultureInfo.InvariantCulture) : type==typeof(string) ? text : type==typeof(Guid) ? Guid.Parse(text)
+            : type.IsEnum ? Enum.Parse(type,text,true) : TypeDescriptor.GetConverter(type).ConvertFromString(null,Options.EffectiveCulture,text);
+        return TableJson.Value(value,_column!.FilterType);
+    }
+    private Task ApplyAsync()=>ApplyFilterAsync(true);
+    private Task ApplyImmediateAsync()=>IsImmediate ? ApplyFilterAsync(false) : Task.CompletedTask;
+    private async Task ApplyFilterAsync(bool close)
+    {
+        if(_column is null) return;
+        try
+        {
+            _error=null;
+            var next=Query.Copy(); next.Filters.RemoveAll(f=>f.ColumnId==_column.Id);
+            List<JsonElement> values=[];
+            if(_operator==Models.FilterOperator.DateTree)
+            {
+                values=(_dateTree?.Periods ?? _periods).Select(p=>TableJson.Value(p,typeof(CalendarPeriod))).ToList();
+                if(_dateTree?.IncludeEmpty ?? _dateEmpty) values.Add(TableJson.Value(null,typeof(DateOnly?)));
+            }
+            else if(_operator is not (Models.FilterOperator.Empty or Models.FilterOperator.NotEmpty or Models.FilterOperator.Custom))
+            {
+                if(IsChoice) values=_choices.Where(c=>_selected.Contains(c.Key)).Select(c=>c.Value.Clone()).ToList();
+                else { values.Add(Parse(_first)); if(_operator==Models.FilterOperator.Between) values.Add(Parse(_second)); }
+            }
+            if(Inline && values.Count==0 && _operator is not (Models.FilterOperator.Empty or Models.FilterOperator.NotEmpty or Models.FilterOperator.Custom))
+                throw new ArgumentException("Выберите хотя бы одно значение для условия.");
+            if(values.Count>0 || _operator is Models.FilterOperator.Empty or Models.FilterOperator.NotEmpty or Models.FilterOperator.Custom)
+                next.Filters.Add(new(_column.Id,_operator,values,_customId));
+            Engine.Apply(Rows(),next,FixedFilter);
+            Query=next;
+            await Changed.InvokeAsync(next); if(close) Close();
+        }
+        catch(Exception ex) { _error=ex.Message; }
+    }
+    private async Task ResetAsync()
+    {
+        if(_column is null) return;
+        var next=Query.Copy(); next.Filters.RemoveAll(f=>f.ColumnId==_column.Id);
+        await Changed.InvokeAsync(next); Close();
+    }
+    public static string OperatorLabel(Models.FilterOperator op)=>op switch
+    {
+        Models.FilterOperator.Array=>"Массив",
+        Models.FilterOperator.DateTree=>"Выбор дат (дерево)",
+        Models.FilterOperator.Equal=>"Равно одному из",Models.FilterOperator.NotEqual=>"Не равно ни одному",Models.FilterOperator.Contains=>"Содержит",
+        Models.FilterOperator.StartsWith=>"Начинается с",Models.FilterOperator.Greater=>"Больше",Models.FilterOperator.GreaterOrEqual=>"Больше или равно",
+        Models.FilterOperator.Less=>"Меньше",Models.FilterOperator.LessOrEqual=>"Меньше или равно",Models.FilterOperator.Between=>"В диапазоне",
+        Models.FilterOperator.Empty=>"Пусто",Models.FilterOperator.NotEmpty=>"Не пусто",Models.FilterOperator.Any=>"Содержит любой",
+        Models.FilterOperator.None=>"Не содержит ни одного",Models.FilterOperator.All=>"Содержит все",_=>op.ToString()
+    };
+    private static bool IsScalar(Type type) => (Nullable.GetUnderlyingType(type) ?? type) is var t && (t.IsValueType || t==typeof(string));
+}

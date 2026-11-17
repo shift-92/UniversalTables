@@ -1,0 +1,84 @@
+@namespace UniversalTables.Components
+@using UniversalTables.Query
+<fieldset class="ut-filter-group">
+    <legend>
+        <select aria-label="Логика группы" @bind="Group.Junction">
+            <option value="@FilterJunction.And">AND — все условия</option>
+            <option value="@FilterJunction.Or">OR — любое условие</option>
+        </select>
+    </legend>
+    @foreach(var rule in Group.Rules.ToArray())
+    {
+        <div class="ut-complex-rule" @key="rule">
+            <span>@Title(rule.ColumnId): @TableFilter.OperatorLabel(rule.Operator) @string.Join(", ",rule.Values.Select(v=>v.ToString()))</span>
+            <button type="button" @onclick="()=>Edit(rule)">Изменить</button>
+            <button type="button" aria-label="Удалить условие" @onclick="()=>Remove(rule)">×</button>
+        </div>
+    }
+    @foreach(var child in Group.Groups.ToArray())
+    {
+        <div @key="child">
+            <FilterGroupEditor Group="child" Columns="Columns" Engine="Engine" Rows="Rows" Data="Data" FixedFilter="FixedFilter" Depth="@(Depth+1)" />
+            <button type="button" @onclick="()=>Group.Groups.Remove(child)">Удалить группу</button>
+        </div>
+    }
+    <div class="ut-buttons">
+        <label>Столбец условия
+        <select aria-label="Столбец нового условия" @bind="_columnId">
+            <option value="">Выберите столбец</option>
+            @foreach(var column in Columns.OrderBy(c=>c.Order)) { <option value="@column.Id">@column.Title</option> }
+        </select></label>
+        <button type="button" disabled="@string.IsNullOrEmpty(_columnId)" @onclick="Add">Добавить условие</button>
+        <button type="button" disabled="@(Depth>=32)" @onclick="()=>Group.Groups.Add(new())">Добавить группу</button>
+    </div>
+    @if(_error is not null) { <div class="ut-error" role="alert">@_error</div> }
+    <TableFilter @ref="_editor" Inline="true" Query="_condition" Engine="Engine" Rows="Rows" Data="Data" FixedFilter="FixedFilter" Changed="ConditionChanged" />
+</fieldset>
+@code {
+    [Parameter,EditorRequired] public FilterGroup Group {get;set;}=default!;
+    [Parameter,EditorRequired] public IReadOnlyList<TableColumn> Columns {get;set;}=default!;
+    [Parameter,EditorRequired] public TableQueryEngine Engine {get;set;}=default!;
+    [Parameter,EditorRequired] public Func<IReadOnlyList<object>> Rows {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    [Parameter] public Func<object,bool>? FixedFilter {get;set;}
+    [Parameter] public int Depth {get;set;}
+    private string _columnId="";
+    private string? _error;
+    private QueryState _condition=new();
+    private FilterRule? _editing;
+    private TableColumn? _pending;
+    private TableFilter? _editor;
+    private string Title(string id)=>Columns.FirstOrDefault(c=>c.Id==id)?.Title ?? id;
+    private void Add()
+    {
+        _editing=null; _condition=new(); _error=null;
+        _pending=Columns.FirstOrDefault(c=>c.Id==_columnId);
+    }
+    private void Edit(FilterRule rule)
+    {
+        _editing=rule; _condition=new QueryState { Filters=[rule] }.Copy(); _error=null;
+        _pending=Columns.FirstOrDefault(c=>c.Id==rule.ColumnId);
+    }
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if(_pending is not { } column) return;
+        _pending=null;
+        try { _editor?.Open(column); }
+        catch(Exception ex) { _error=ex.Message; StateHasChanged(); }
+    }
+    private void ConditionChanged(QueryState state)
+    {
+        var replacement=state.Filters.FirstOrDefault();
+        if(replacement is null) return;
+        var index=_editing is null ? -1 : Group.Rules.IndexOf(_editing);
+        if(index>=0) Group.Rules[index]=replacement;
+        else Group.Rules.Add(replacement);
+        _condition=state;
+        _editing=null;
+    }
+    private void Remove(FilterRule rule)
+    {
+        if(ReferenceEquals(_editing,rule)) { _editor?.Close(); _editing=null; _pending=null; }
+        Group.Rules.Remove(rule);
+    }
+}

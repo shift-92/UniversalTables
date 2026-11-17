@@ -1,0 +1,86 @@
+@namespace UniversalTables.Components
+@using System.ComponentModel
+@using UniversalTables.Drafts
+@inject TableOptions Options
+@if (Field.Column.EditorTemplate is not null)
+{
+    @Field.Column.EditorTemplate(Field)
+}
+else if (Field.Column.Reference is { } reference)
+{
+    <ReferenceAutocomplete Value="_selected" ValueChanged="SelectAsync" Items="()=>Data.ReferenceOptions(reference.TargetType)"
+        Disabled="@(Field.ReadOnly || Field.Busy)" Clearable="reference.Nullable" Title="@Field.Column.Title" />
+}
+else if (_type == typeof(bool) || _type.IsEnum)
+{
+    <select class="ut-input" value="@_text" disabled="@(Field.ReadOnly || Field.Busy)" @onchange="Input">
+        @if (_nullable) { <option value="">Не задано</option> }
+        @if (_type == typeof(bool))
+        {
+            <option value="true">Да</option><option value="false">Нет</option>
+        }
+        else
+        {
+            @foreach(var name in Enum.GetNames(_type)) { <option value="@name">@name</option> }
+        }
+    </select>
+}
+else
+{
+    <input class="ut-input" type="@(Options.Culture is not null ? "text" : _type==typeof(DateOnly) ? "date" : _type==typeof(DateTime) ? "datetime-local" : "text")" step="any" value="@_text" disabled="@(Field.ReadOnly || Field.Busy)"
+        aria-label="@Field.Column.Title" @oninput="Input" />
+}
+@if(Field.Error is not null) { <div class="ut-error" role="alert">@Field.Error</div> }
+@code {
+    [Parameter,EditorRequired] public FieldDraft Field {get;set;}=default!;
+    [Parameter,EditorRequired] public ITableDataSource Data {get;set;}=default!;
+    private FieldDraft? _initialized;
+    private Type _type=typeof(string);
+    private bool _nullable;
+    private string _text="";
+    private ReferenceOption? _selected;
+    protected override void OnParametersSet()
+    {
+        if(ReferenceEquals(_initialized,Field)) return;
+        _initialized=Field;
+        var type=FormDraft.EditType(Field.Column);
+        _type=Nullable.GetUnderlyingType(type) ?? type;
+        _nullable=!type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
+        _text=Field.Value is bool b ? b ? "true" : "false" : Options.Format(Field.Value);
+        if(Options.Culture is null && Field.Value is DateOnly date) _text=date.ToString("yyyy-MM-dd",CultureInfo.InvariantCulture);
+        if(Options.Culture is null && Field.Value is DateTime time) _text=time.ToString("yyyy-MM-ddTHH:mm:ss.fffffff",CultureInfo.InvariantCulture);
+        _selected=Field.Column.Reference is { } reference && Field.Value is Guid id
+            ? Data.ResolveReference(reference.TargetType,id) ?? new ReferenceOption(id,id.ToString(),false) : null;
+    }
+    private Task SelectAsync(ReferenceOption? option)
+    {
+        if(Field.Busy || Field.ReadOnly) return Task.CompletedTask;
+        if(option is null && !Field.Column.Reference!.Nullable) { Field.Error="Выберите значение."; return Task.CompletedTask; }
+        if(option is {Selectable:false}) { Field.Error="Значение недоступно для выбора."; return Task.CompletedTask; }
+        _selected=option; Field.Value=option?.Id; Field.IncludeInSubmission=true; Field.Error=null;
+        return Task.CompletedTask;
+    }
+    private void Input(ChangeEventArgs e)
+    {
+        if(Field.Busy || Field.ReadOnly) return;
+        _text=e.Value?.ToString() ?? "";
+        try
+        {
+            object? value;
+            if(_type==typeof(string)) value=_text;
+            else if(_text.Length==0 && _nullable) value=null;
+            else if(_type==typeof(Guid)) value=Guid.Parse(_text);
+            else if(_type==typeof(DateOnly)) value=DateOnly.Parse(_text,Options.Culture ?? CultureInfo.InvariantCulture);
+            else if(_type==typeof(DateTime))
+            {
+                var parsed=DateTime.Parse(_text,Options.Culture ?? CultureInfo.InvariantCulture);
+                value=DateTime.SpecifyKind(parsed,Field.OriginalValue is DateTime original ? original.Kind : DateTimeKind.Unspecified);
+            }
+            else if(_type.IsEnum) value=Enum.Parse(_type,_text,true);
+            else value=TypeDescriptor.GetConverter(_type).ConvertFromString(null,Options.EffectiveCulture,_text);
+            Field.Value=value; Field.IncludeInSubmission=true; Field.Error=null;
+        }
+        catch(Exception ex) when(ex is FormatException or ArgumentException or NotSupportedException or OverflowException)
+        { Field.Error=ex.Message; }
+    }
+}
